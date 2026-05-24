@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  body {
+    @apply bg-ink-50 text-ink-900 antialiased;
+    font-feature-settings: "ss01", "cv11";
+    -webkit-tap-highlight-color: transparent;
+    position: fixed;
+    inset: 0;
+    width: 100%;
+  }
+  .dark body { @apply bg-ink-950 text-ink-100; }
+  ::selection { @apply bg-brand/30 text-ink-900; }
+  .dark ::selection { @apply bg-brand/40 text-ink-50; }
+}
+
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { @apply bg-ink-300 rounded-full; }
+  .dark .scrollbar-thin::-webkit-scrollbar-thumb { @apply bg-ink-700; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+  .safe-top { padding-top: env(safe-area-inset-top); }
+}
+
+/* Markdown */
+.prose-msg { @apply text-[15px] leading-relaxed; }
+.prose-msg p { @apply mb-3 last:mb-0; }
+.prose-msg code:not(pre code) { @apply bg-ink-100 dark:bg-ink-800 px-1.5 py-0.5 rounded text-[13px] font-mono; }
+.prose-msg pre { @apply bg-ink-900 dark:bg-ink-900 text-ink-50 rounded-xl p-4 my-3 overflow-x-auto text-[13px] font-mono leading-relaxed scrollbar-thin; }
+.prose-msg pre code { @apply bg-transparent p-0; }
+.prose-msg ul, .prose-msg ol { @apply pl-5 mb-3 space-y-1; }
+.prose-msg ul { @apply list-disc; }
+.prose-msg ol { @apply list-decimal; }
+.prose-msg h1, .prose-msg h2, .prose-msg h3 { @apply font-semibold mt-4 mb-2; }
+.prose-msg h1 { @apply text-lg; }
+.prose-msg h2 { @apply text-base; }
+.prose-msg h3 { @apply text-sm uppercase tracking-wide text-ink-500; }
+.prose-msg a { @apply text-brand underline underline-offset-2; }
+.prose-msg blockquote { @apply border-l-2 border-ink-300 dark:border-ink-700 pl-3 italic text-ink-600 dark:text-ink-400; }
+.prose-msg table { @apply text-sm border-collapse my-3; }
+.prose-msg th, .prose-msg td { @apply border border-ink-200 dark:border-ink-800 px-2 py-1; }

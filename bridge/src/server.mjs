@@ -562,13 +562,13 @@ function handleSocket(ws) {
 
     if (msg.type === "prompt" && typeof msg.content === "string") {
       if (currentChild) {
-        send({ type: "error", message: "Vorherige Antwort läuft noch — bitte stoppen." });
+        send({ type: "error", message: "Previous response still running — please stop it." });
         return;
       }
 
       const sess = ensureSession(sid, email);
       if (!sess) {
-        send({ type: "error", message: "Session-Konflikt (gehört einem anderen Konto)." });
+        send({ type: "error", message: "Session conflict (belongs to a different account)." });
         return;
       }
 
@@ -709,13 +709,13 @@ function handleStreamLine(line, send, rt, sid, assistantId) {
 }
 
 // -------- PTY Mode (xterm.js terminal in PWA) --------
-// Per WS-Verbindung wird ein PTY gespawnt, das `claude` interaktiv ausführt.
-// Frames vom Client: {type:"input", data:string} / {type:"resize", cols, rows} / {type:"signal", name:"SIGINT"}
-// Frames an den Client: {type:"data", data:string} / {type:"exit", code, signal}
+// Each WS connection spawns a PTY that runs `claude` interactively.
+// Frames from client: {type:"input", data:string} / {type:"resize", cols, rows} / {type:"signal", name:"SIGINT"}
+// Frames to client:   {type:"data", data:string} / {type:"exit", code, signal}
 //
-// Sudo-askpass: SUDO_ASKPASS zeigt auf askpass-claude-sudo.sh, das das Passwort
-// aus dem macOS-Keychain (Service "claude-sudo") zieht. `sudo -A` benutzt das
-// automatisch. Damit funktionieren sudo-Befehle im Terminal ohne Prompt-Hänger.
+// Sudo askpass: SUDO_ASKPASS points to askpass-claude-sudo.sh, which pulls the
+// password from the macOS Keychain (service "claude-sudo"). `sudo -A` uses this
+// automatically, so sudo commands in the terminal work without a hanging prompt.
 
 const ASKPASS_PATH = process.env.ASKPASS_PATH || join(homedir(), "Library/conduit-bridge/bin/askpass-claude-sudo.sh");
 
@@ -743,7 +743,7 @@ function handlePtySocket(ws) {
     ...process.env,
     TERM: "xterm-256color",
     COLORTERM: "truecolor",
-    LANG: process.env.LANG || "de_DE.UTF-8",
+    LANG: process.env.LANG || "en_US.UTF-8",
     SUDO_ASKPASS: ASKPASS_PATH,
     FORCE_COLOR: "1",
   };

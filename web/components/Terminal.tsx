@@ -11,7 +11,7 @@ type Props = {
 
 type TermStatus = "connecting" | "open" | "closed" | "error";
 
-// xterm.js wird dynamisch importiert (ESM-only, kein SSR möglich)
+// xterm.js is dynamically imported (ESM-only, no SSR possible)
 export function Terminal({ sid, cwd, theme }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -61,7 +61,7 @@ export function Terminal({ sid, cwd, theme }: Props) {
       termRef.current = term;
       fitRef.current = fit;
 
-      // Resize-Observer auf den Host
+      // Resize observer on the host
       resizeObs = new ResizeObserver(() => {
         try { fit.fit(); } catch {}
         if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -72,7 +72,7 @@ export function Terminal({ sid, cwd, theme }: Props) {
       });
       resizeObs.observe(hostRef.current);
 
-      // Input vom User → WS
+      // User input → WS
       term.onData((data) => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
           try { wsRef.current.send(JSON.stringify({ type: "input", data })); } catch {}
@@ -90,7 +90,7 @@ export function Terminal({ sid, cwd, theme }: Props) {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ sessionId: sid }),
         });
-        if (!tokRes.ok) throw new Error("Auth fehlgeschlagen");
+        if (!tokRes.ok) throw new Error("Auth failed");
         const { token, sessionId, bridgeUrl } = await tokRes.json();
         const url = `${bridgeUrl}/pty?token=${encodeURIComponent(token)}&sid=${encodeURIComponent(sessionId)}`;
         const ws = new WebSocket(url);
@@ -117,18 +117,18 @@ export function Terminal({ sid, cwd, theme }: Props) {
         ws.onclose = () => {
           if (cancelled) return;
           setStatus("closed");
-          // 1× Auto-Reconnect nach 2s
+          // 1× auto-reconnect after 2s
           if (reconnectRef.current < 1) {
             reconnectRef.current++;
             setTimeout(() => { if (!cancelled) connectWs(); }, 2000);
           }
         };
         ws.onerror = () => {
-          setError("Bridge offline — Mac mini erreichbar? Tunnel up?");
+          setError("Bridge offline — is your host reachable? Tunnel up?");
           setStatus("error");
         };
       } catch (e: any) {
-        setError(e?.message || "Verbindung fehlgeschlagen");
+        setError(e?.message || "Connection failed");
         setStatus("error");
       }
     };
@@ -146,22 +146,22 @@ export function Terminal({ sid, cwd, theme }: Props) {
   const reconnect = () => {
     try { wsRef.current?.close(); } catch {}
     reconnectRef.current = 0;
-    // useEffect re-init? Wir triggern selbst:
+    // useEffect re-init? Trigger it ourselves:
     const term = termRef.current;
     if (term) term.write(`\r\n\x1b[2m[reconnect…]\x1b[0m\r\n`);
-    // Trick: setStatus triggert kein re-effect; wir bauen die WS direkt neu
+    // setStatus does not trigger a re-effect; rebuild the WS directly
     setStatus("connecting");
     setError(null);
     setTimeout(() => {
       // Re-trigger by closing existing socket and letting onclose's auto-reconnect logic kick in
-      // Falls onclose schon gefeuert hat, manuell anstoßen:
+      // If onclose already fired, kick it manually:
       (async () => {
         try {
           const tokRes = await fetch("/api/chat/token", {
             method: "POST", headers: { "content-type": "application/json" },
             body: JSON.stringify({ sessionId: sid }),
           });
-          if (!tokRes.ok) throw new Error("Auth fehlgeschlagen");
+          if (!tokRes.ok) throw new Error("Auth failed");
           const { token, sessionId, bridgeUrl } = await tokRes.json();
           const url = `${bridgeUrl}/pty?token=${encodeURIComponent(token)}&sid=${encodeURIComponent(sessionId)}`;
           const ws = new WebSocket(url);
@@ -182,7 +182,7 @@ export function Terminal({ sid, cwd, theme }: Props) {
           ws.onclose = () => setStatus("closed");
           ws.onerror = () => { setError("Bridge offline"); setStatus("error"); };
         } catch (e: any) {
-          setError(e?.message || "Verbindung fehlgeschlagen");
+          setError(e?.message || "Connection failed");
           setStatus("error");
         }
       })();
@@ -204,7 +204,7 @@ export function Terminal({ sid, cwd, theme }: Props) {
           }
         />
         <span className="font-mono text-ink-600 dark:text-ink-300">
-          {status === "open" ? "PTY verbunden" : status === "connecting" ? "verbinde…" : status === "error" ? "Fehler" : "geschlossen"}
+          {status === "open" ? "PTY connected" : status === "connecting" ? "connecting…" : status === "error" ? "Error" : "closed"}
         </span>
         {cwd && <span className="font-mono text-ink-400 dark:text-ink-500 hidden sm:inline">· {cwd.split("/").pop()}</span>}
         <div className="flex-1" />
@@ -221,7 +221,7 @@ export function Terminal({ sid, cwd, theme }: Props) {
           type="button"
           onClick={reconnect}
           className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-ink-200 dark:border-ink-700 hover:bg-ink-50 dark:hover:bg-ink-800"
-          title="Neu verbinden"
+          title="Reconnect"
         >
           <RotateCcw className="h-3 w-3" /> Reconnect
         </button>

@@ -115,7 +115,7 @@ export function Chat({ email }: { email: string }) {
       if (!j.ok) throw new Error(j.error || "fetch failed");
       const modeMap = loadModeMap();
       const fetched: ChatSession[] = (j.sessions || []).map((s: any) => ({
-        id: s.id, title: s.title || "Neuer Chat", updatedAt: s.updatedAt,
+        id: s.id, title: s.title || "New chat", updatedAt: s.updatedAt,
         messages: [], loaded: false, status: "idle", statusMsg: null,
         cwd: s.cwd ?? null,
         usage: s.usage ? { ...ZERO_USAGE, ...s.usage } : { ...ZERO_USAGE },
@@ -140,7 +140,7 @@ export function Chat({ email }: { email: string }) {
       });
     } catch (e) {
       // history failure — show on active session if any
-      if (activeId) setStatusFor(activeId, "error", "Verlauf konnte nicht geladen werden");
+      if (activeId) setStatusFor(activeId, "error", "Failed to load history");
     } finally {
       setHistoryLoading(false);
     }
@@ -185,7 +185,7 @@ export function Chat({ email }: { email: string }) {
     const inheritCwd = sessions.find((x) => x.id === activeId)?.cwd ?? null;
     const s: ChatSession = {
       id: sessionUuid(),
-      title: mode === "terminal" ? "Terminal" : "Neuer Chat",
+      title: mode === "terminal" ? "Terminal" : "New chat",
       updatedAt: Date.now(),
       messages: [], loaded: true, status: "idle", statusMsg: null,
       cwd: inheritCwd, usage: { ...ZERO_USAGE }, mode,
@@ -312,7 +312,7 @@ export function Chat({ email }: { email: string }) {
     if (!session || session.status === "streaming" || session.status === "connecting") {
       if (!targetSid) session = newSession();
       else {
-        setStatusFor(session!.id, "error", "Antwort läuft noch — bitte stoppen.");
+        setStatusFor(session!.id, "error", "Reply still running — please stop it.");
         return;
       }
     }
@@ -472,7 +472,7 @@ export function Chat({ email }: { email: string }) {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId: sid }),
       });
-      if (!tokRes.ok) throw new Error("Auth fehlgeschlagen.");
+      if (!tokRes.ok) throw new Error("Auth failed.");
       const { token, sessionId, bridgeUrl } = await tokRes.json();
       const url = `${bridgeUrl}/ws?token=${encodeURIComponent(token)}&sid=${encodeURIComponent(sessionId)}`;
       const ws = new WebSocket(url);
@@ -484,7 +484,7 @@ export function Chat({ email }: { email: string }) {
         clearTimeout(rt.watchdog);
         rt.watchdog = setTimeout(() => {
           patchMessage(sid, assistantId, { content: "**⚠ Bridge antwortet nicht** (10 min still, getrennt). Erneut senden zum Versuch." });
-          setStatusFor(sid, "error", "Bridge antwortet nicht.");
+          setStatusFor(sid, "error", "Bridge not responding.");
           teardown(sid);
         }, WATCHDOG_MS);
       };
@@ -536,15 +536,15 @@ export function Chat({ email }: { email: string }) {
         } else if (msg.type === "started") {
           armWatchdog();
         } else if (msg.type === "heartbeat") {
-          // Bridge meldet: Claude denkt noch / Tool läuft — watchdog reset, kein UI-Update
+          // Bridge says: Claude still thinking / tool running — watchdog reset, no UI update
           armWatchdog();
         } else if (msg.type === "done") {
           setStatusFor(sid, "idle");
           teardown(sid);
           refreshSessions();
         } else if (msg.type === "error") {
-          patchMessage(sid, assistantId, { content: `**Bridge-Fehler:** ${msg.message || "unbekannt"}` });
-          setStatusFor(sid, "error", String(msg.message || "Bridge-Fehler"));
+          patchMessage(sid, assistantId, { content: `**Bridge error:** ${msg.message || "unknown"}` });
+          setStatusFor(sid, "error", String(msg.message || "Bridge error"));
           teardown(sid);
         } else if (msg.type === "pong") {
           // ack — kein watchdog-reset, damit ein stiller claude-Hang erkannt wird
@@ -554,14 +554,14 @@ export function Chat({ email }: { email: string }) {
         const cur = wsMap.current.get(sid);
         if (cur && cur.ws === ws) {
           if (tryReconnect("close")) return;
-          setStatusFor(sid, "error", "Verbindung getrennt — erneut senden.");
+          setStatusFor(sid, "error", "Connection dropped — send again.");
           teardown(sid);
         }
       };
       ws.onerror = () => {
         if (tryReconnect("error")) return;
-        setStatusFor(sid, "error", "Bridge offline — Mac mini erreichbar? Tunnel up?");
-        patchMessage(sid, assistantId, { content: "**Verbindung zur Bridge fehlgeschlagen.** Prüfe Mac mini + Tunnel." });
+        setStatusFor(sid, "error", "Bridge offline — host reachable? Tunnel up?");
+        patchMessage(sid, assistantId, { content: "**Connection to bridge failed.** Check your host + tunnel." });
         teardown(sid);
       };
     } catch (e) {
@@ -582,7 +582,7 @@ export function Chat({ email }: { email: string }) {
 
   // ------------- Voice (MediaRecorder + Whisper) -------------
   // Klick = Push-to-Talk (Aufnahme stoppt nach 1.5 s Stille, dann transkribieren + auto-submit).
-  // Doppelklick / Long-Press = Hands-Free: nach jedem Submit hört das Mikro weiter zu.
+  // Double-click / long-press = hands-free: after every submit the mic keeps listening.
 
   function pickMime(): string | undefined {
     const candidates = [
@@ -609,7 +609,7 @@ export function Chat({ email }: { email: string }) {
   async function startVoice(opts: { handsFree?: boolean } = {}) {
     if (recording || transcribing) return;
     if (!("MediaRecorder" in window) || !navigator.mediaDevices?.getUserMedia) {
-      if (activeId) setStatusFor(activeId, "error", "Sprachaufnahme im Browser nicht verfügbar.");
+      if (activeId) setStatusFor(activeId, "error", "Voice recording not available in this browser.");
       return;
     }
     handsFreeRef.current = !!opts.handsFree;
@@ -623,7 +623,7 @@ export function Chat({ email }: { email: string }) {
     } catch (e) {
       handsFreeRef.current = false;
       setHandsFree(false);
-      if (activeId) setStatusFor(activeId, "error", "Mikrofon-Zugriff verweigert.");
+      if (activeId) setStatusFor(activeId, "error", "Microphone access denied.");
       return;
     }
     mediaStreamRef.current = stream;
@@ -652,7 +652,7 @@ export function Chat({ email }: { email: string }) {
       if (blob.size < 1500) {
         // Zu wenig Audio (Klick ohne sprechen oder direkter Cancel)
         if (wasHandsFree && handsFreeRef.current) {
-          // Im Hands-Free direkt nächste Runde starten — kein leerer Send
+          // In hands-free mode, kick off the next round immediately — no empty send
           setTimeout(() => startVoice({ handsFree: true }), 100);
         }
         return;
@@ -736,7 +736,7 @@ export function Chat({ email }: { email: string }) {
     try {
       const fd = new FormData();
       fd.append("file", blob, `voice.${extForMime(blob.type)}`);
-      fd.append("language", "de");
+      fd.append("language", "en");
       fd.append("response_format", "json");
       fd.append("temperature", "0.0");
 
@@ -771,7 +771,7 @@ export function Chat({ email }: { email: string }) {
     }
   }
 
-  // Long-Press Detection für Hands-Free auf Mobile (Doppelklick ist auf iOS unzuverlässig).
+  // Long-press detection for hands-free on mobile (double-click is unreliable on iOS).
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFiredRef = useRef(false);
   const LONG_PRESS_MS = 500;
@@ -836,7 +836,7 @@ export function Chat({ email }: { email: string }) {
           <button
             onClick={() => setSidebarOpen(false)}
             className="md:hidden p-2 rounded-lg hover:bg-ink-100 dark:hover:bg-ink-800"
-            aria-label="Schließen"
+            aria-label="Close"
           ><X className="w-4 h-4" /></button>
         </div>
 
@@ -875,15 +875,15 @@ export function Chat({ email }: { email: string }) {
                     ) : s.status === "error" ? (
                       <span className="h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" />
                     ) : isOpen ? (
-                      <span className="h-1.5 w-1.5 rounded-full bg-ink-400 dark:bg-ink-500 shrink-0" title="In Tab geöffnet" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-ink-400 dark:bg-ink-500 shrink-0" title="Open in tab" />
                     ) : (
                       <span className="h-1.5 w-1.5 shrink-0" />
                     )}
                     <span className="flex-1 truncate">{s.title}</span>
                     <button
-                      onClick={(e) => { e.stopPropagation(); if (confirm("Chat löschen?")) deleteSession(s.id); }}
+                      onClick={(e) => { e.stopPropagation(); if (confirm("Delete chat?")) deleteSession(s.id); }}
                       className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-ink-200 dark:hover:bg-ink-700"
-                      aria-label="Löschen"
+                      aria-label="Delete"
                     ><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 </li>
@@ -903,7 +903,7 @@ export function Chat({ email }: { email: string }) {
             <button
               onClick={logout}
               className="p-2 rounded-lg hover:bg-ink-100 dark:hover:bg-ink-800"
-              aria-label="Abmelden"
+              aria-label="Sign out"
             ><LogOut className="w-4 h-4" /></button>
           </div>
         </div>
@@ -929,7 +929,7 @@ export function Chat({ email }: { email: string }) {
           <button
             onClick={() => setTabsDrawerOpen(false)}
             className="p-2 rounded-lg hover:bg-ink-100 dark:hover:bg-ink-800"
-            aria-label="Schließen"
+            aria-label="Close"
           ><X className="w-4 h-4" /></button>
         </div>
         <div className="flex-1 overflow-y-auto px-2 py-3 scrollbar-thin">
@@ -958,7 +958,7 @@ export function Chat({ email }: { email: string }) {
                   <button
                     onClick={(e) => { e.stopPropagation(); closeTab(s.id); }}
                     className="p-1 rounded hover:bg-ink-200 dark:hover:bg-ink-700"
-                    aria-label="Tab schließen"
+                    aria-label="Close tab"
                   ><X className="w-3.5 h-3.5" /></button>
                 </div>
               </li>
@@ -998,7 +998,7 @@ export function Chat({ email }: { email: string }) {
                 <span className="flex-1 truncate">{s.title}</span>
                 <span
                   role="button"
-                  aria-label="Tab schließen"
+                  aria-label="Close tab"
                   onClick={(e) => { e.stopPropagation(); closeTab(s.id); }}
                   className="opacity-60 hover:opacity-100 p-1 rounded hover:bg-ink-200 dark:hover:bg-ink-700"
                 ><X className="w-3 h-3" /></span>
@@ -1008,8 +1008,8 @@ export function Chat({ email }: { email: string }) {
           <button
             onClick={() => newSession("chat")}
             className="shrink-0 h-9 w-9 flex items-center justify-center rounded-lg text-ink-500 hover:text-ink-900 dark:hover:text-ink-50 hover:bg-white/60 dark:hover:bg-ink-900/40 transition"
-            title="Neuer Chat (⌘T)"
-            aria-label="Neuer Chat"
+            title="New chat (⌘T)"
+            aria-label="New chat"
           ><Plus className="w-4 h-4" /></button>
         </div>
 
@@ -1025,10 +1025,10 @@ export function Chat({ email }: { email: string }) {
                   : "bg-emerald-500"
               )} />
               <span className="truncate">
-                {status === "streaming" ? "Antwort kommt…"
-                  : status === "connecting" ? "Verbinde…"
-                  : status === "error" ? (statusMsg || "Fehler")
-                  : "Bridge bereit"}
+                {status === "streaming" ? "Response incoming…"
+                  : status === "connecting" ? "Connecting…"
+                  : status === "error" ? (statusMsg || "Error")
+                  : "Bridge ready"}
               </span>
             </div>
           </div>
@@ -1038,8 +1038,8 @@ export function Chat({ email }: { email: string }) {
             className="hidden sm:flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-ink-200 dark:border-ink-700 text-[11px] text-ink-600 dark:text-ink-300 font-mono"
             title={
               active?.usage
-                ? `${active.usage.turns} Turns · in ${active.usage.tokens_in} · out ${active.usage.tokens_out} · cache-read ${active.usage.cache_read} · cache-create ${active.usage.cache_create}`
-                : "Noch keine Nutzung"
+                ? `${active.usage.turns} turns · in ${active.usage.tokens_in} · out ${active.usage.tokens_out} · cache-read ${active.usage.cache_read} · cache-create ${active.usage.cache_create}`
+                : "No usage yet"
             }
           >
             <span>⌘ {fmtTokens((active?.usage?.tokens_in ?? 0) + (active?.usage?.tokens_out ?? 0))}</span>
@@ -1065,10 +1065,10 @@ export function Chat({ email }: { email: string }) {
             {(!active || active.messages.length === 0) && (
               <div className="text-center py-16 animate-fade-in">
                 <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-ink-900 dark:bg-ink-50 text-ink-50 dark:text-ink-900 mb-4 text-xl font-mono">⌘</div>
-                <h2 className="text-2xl font-semibold tracking-tight">Womit fangen wir an?</h2>
-                <p className="text-sm text-ink-500 mt-1">Frag Claude — Bridge läuft auf deinem Mac mini.</p>
+                <h2 className="text-2xl font-semibold tracking-tight">Where do we start?</h2>
+                <p className="text-sm text-ink-500 mt-1">Ask Claude — bridge is running on your host.</p>
                 <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-2 max-w-md mx-auto text-left">
-                  {["Was steht heute an?", "Status aller Roloff-Portale prüfen", "Zeig mir die letzten Belegify-Logs", "Erstelle einen kurzen Tagesplan"].map((p) => (
+                  {["What's on for today?", "Summarize my latest git changes", "Show me the recent deploy logs", "Draft a short status update"].map((p) => (
                     <button
                       key={p}
                       onClick={() => send(p)}
@@ -1128,7 +1128,7 @@ export function Chat({ email }: { email: string }) {
                       type="button"
                       onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== i))}
                       className="p-0.5 rounded hover:bg-ink-200 dark:hover:bg-ink-700 text-ink-500"
-                      aria-label="Anhang entfernen"
+                      aria-label="Remove attachment"
                     ><X className="w-3 h-3" /></button>
                   </div>
                 ))}
@@ -1171,7 +1171,7 @@ export function Chat({ email }: { email: string }) {
                 onPointerCancel={micPointerCancel}
                 onContextMenu={(e) => e.preventDefault()}
                 disabled={transcribing}
-                title={recording ? "Tippen zum Stoppen" : "Tippen = Diktat · Lang drücken = Hands-Free"}
+                title={recording ? "Tap to stop" : "Tap = dictate · Long-press = hands-free"}
                 className={cn(
                   "shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition select-none touch-none",
                   transcribing
@@ -1180,7 +1180,7 @@ export function Chat({ email }: { email: string }) {
                       ? (handsFree ? "bg-brand text-white ring-2 ring-brand/40 animate-pulse" : "bg-brand text-white animate-pulse")
                       : "text-ink-500 hover:text-ink-900 dark:hover:text-ink-50 hover:bg-ink-100 dark:hover:bg-ink-700"
                 )}
-                aria-label={recording ? "Aufnahme stoppen" : transcribing ? "Transkribiere…" : "Voice-Input"}
+                aria-label={recording ? "Stop recording" : transcribing ? "Transcribing…" : "Voice input"}
               >
                 {transcribing ? (
                   <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1192,7 +1192,7 @@ export function Chat({ email }: { email: string }) {
 
               <label
                 className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center text-ink-500 hover:text-ink-900 dark:hover:text-ink-50 hover:bg-ink-100 dark:hover:bg-ink-700 transition cursor-pointer"
-                title="Datei oder Bild anhängen"
+                title="Attach file or image"
               >
                 <Paperclip className="w-5 h-5" />
                 <input
@@ -1253,7 +1253,7 @@ export function Chat({ email }: { email: string }) {
                   if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(draft); }
                 }}
                 rows={1}
-                placeholder={transcribing ? "Transkribiere…" : recording ? (handsFree ? "Hands-Free — sprich los…" : "Höre zu… (Stille 1.5 s = senden)") : "Nachricht · @ für Datei · ⌘V für Bild"}
+                placeholder={transcribing ? "Transcribing…" : recording ? (handsFree ? "Hands-free — start talking…" : "Listening… (1.5 s silence = send)") : "Message · @ for file · ⌘V for image"}
                 className="flex-1 bg-transparent border-0 outline-none resize-none px-2 py-2.5 text-[15px] leading-relaxed max-h-[200px] scrollbar-thin"
               />
 
@@ -1269,7 +1269,7 @@ export function Chat({ email }: { email: string }) {
                   type="submit"
                   disabled={!draft.trim() && attachments.length === 0}
                   className="shrink-0 w-10 h-10 rounded-xl bg-brand text-white flex items-center justify-center hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed transition active:scale-95"
-                  aria-label="Senden"
+                  aria-label="Send"
                 ><Send className="w-4 h-4" /></button>
               )}
             </form>
@@ -1286,7 +1286,7 @@ export function Chat({ email }: { email: string }) {
           <button
             onClick={() => setSidebarOpen(true)}
             className="flex flex-col items-center justify-center gap-0.5 py-2 px-4 flex-1 text-ink-500 hover:text-ink-900 dark:hover:text-ink-50 transition active:scale-95"
-            aria-label="Verlauf"
+            aria-label="History"
           >
             <History className="w-5 h-5" />
             <span className="text-[10px]">Verlauf</span>
@@ -1294,14 +1294,14 @@ export function Chat({ email }: { email: string }) {
           <button
             onClick={() => newSession("chat")}
             className="-mt-7 w-14 h-14 rounded-full bg-brand text-white flex items-center justify-center shadow-lg shadow-brand/40 ring-4 ring-white dark:ring-ink-900 hover:scale-105 transition active:scale-95"
-            aria-label="Neuer Chat"
+            aria-label="New chat"
           >
             <Plus className="w-7 h-7" />
           </button>
           <button
             onClick={() => setTabsDrawerOpen(true)}
             className="relative flex flex-col items-center justify-center gap-0.5 py-2 px-4 flex-1 text-ink-500 hover:text-ink-900 dark:hover:text-ink-50 transition active:scale-95"
-            aria-label="Offene Tabs"
+            aria-label="Open tabs"
           >
             <Layers className="w-5 h-5" />
             <span className="text-[10px]">Tabs</span>

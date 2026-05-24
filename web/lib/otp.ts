@@ -34,13 +34,13 @@ export async function verifyPending(
       audience: "pending",
     });
     if (String(payload.email).toLowerCase() !== email.toLowerCase()) {
-      return { ok: false, reason: "Mail stimmt nicht mit Code-Anfrage überein." };
+      return { ok: false, reason: "Email doesn't match the code request." };
     }
     if (payload.codeHash !== hashCode(code, email)) {
-      return { ok: false, reason: "Code falsch." };
+      return { ok: false, reason: "Wrong code." };
     }
     return { ok: true };
   } catch {
-    return { ok: false, reason: "Code abgelaufen — bitte neuen anfordern." };
+    return { ok: false, reason: "Code expired — request a new one." };
   }
 }

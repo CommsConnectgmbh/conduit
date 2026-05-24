@@ -12,13 +12,13 @@ export async function POST(req: Request) {
   const email = String(rawEmail || "").trim().toLowerCase();
 
   if (!email || !email.includes("@")) {
-    return NextResponse.json({ ok: false, error: "Mail-Adresse fehlt." }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "Email address required." }, { status: 400 });
   }
 
   const rl = await checkAndHit();
   if (!rl.allowed) {
     return NextResponse.json(
-      { ok: false, error: `Zu viele Versuche. In ${Math.ceil((rl.retryAfterSec || 60) / 60)} min wieder.` },
+      { ok: false, error: `Too many attempts. Try again in ${Math.ceil((rl.retryAfterSec || 60) / 60)} min.` },
       { status: 429, headers: { "retry-after": String(rl.retryAfterSec || 60) } },
     );
   }
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
     await sendOtpMail(email, code);
   } catch (e) {
     console.error("mail send failed", e);
-    return NextResponse.json({ ok: false, error: "Mail-Versand fehlgeschlagen." }, { status: 500 });
+    return NextResponse.json({ ok: false, error: "Failed to send email." }, { status: 500 });
   }
 
   const c = await cookies();

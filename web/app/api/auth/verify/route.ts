@@ -12,16 +12,16 @@ export async function POST(req: Request) {
   const code = String(rawCode || "").replace(/\D/g, "");
 
   if (!email || code.length !== 8) {
-    return NextResponse.json({ ok: false, error: "Mail und 8-stelliger Code nötig." }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "Email and 8-digit code required." }, { status: 400 });
   }
   if (!ALLOWED_EMAILS.includes(email)) {
-    return NextResponse.json({ ok: false, error: "Code falsch." }, { status: 401 });
+    return NextResponse.json({ ok: false, error: "Wrong code." }, { status: 401 });
   }
 
   const c = await cookies();
   const pending = c.get(PENDING_COOKIE)?.value;
   if (!pending) {
-    return NextResponse.json({ ok: false, error: "Code abgelaufen — bitte neuen anfordern." }, { status: 401 });
+    return NextResponse.json({ ok: false, error: "Code expired — request a new one." }, { status: 401 });
   }
 
   const res = await verifyPending(pending, email, code);

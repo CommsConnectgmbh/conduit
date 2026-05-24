@@ -26,10 +26,10 @@ export default function LoginPage() {
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        throw new Error(j.error || "Fehler beim Versand.");
+        throw new Error(j.error || "Failed to send.");
       }
       setStep("code");
-      setInfo("Code wurde an deine Mail gesendet.");
+      setInfo("Code sent to your email.");
     } catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
   }
@@ -45,7 +45,7 @@ export default function LoginPage() {
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        throw new Error(j.error || "Code ungültig.");
+        throw new Error(j.error || "Invalid code.");
       }
       router.replace("/");
       router.refresh();
@@ -60,9 +60,9 @@ export default function LoginPage() {
             <span className="h-2 w-2 rounded-full bg-brand animate-pulse" />
             <span className="text-[11px] uppercase tracking-[0.18em] text-ink-500">Conduit</span>
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight">Anmelden</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
           <p className="text-sm text-ink-500 dark:text-ink-400 mt-1">
-            {step === "email" ? "Mit deiner Mail. Code kommt sofort." : "8-stelliger Code aus deiner Mail."}
+            {step === "email" ? "With your email. Code arrives instantly." : "8-digit code from your email."}
           </p>
         </div>
 
@@ -70,19 +70,19 @@ export default function LoginPage() {
           {step === "email" ? (
             <form onSubmit={requestCode} className="space-y-4">
               <label className="block">
-                <span className="text-xs font-medium text-ink-600 dark:text-ink-400">E-Mail</span>
+                <span className="text-xs font-medium text-ink-600 dark:text-ink-400">Email</span>
                 <input
                   type="email" required autoFocus inputMode="email" autoComplete="email"
                   value={email} onChange={(e) => setEmail(e.target.value)}
                   className="mt-1 w-full px-4 py-3 rounded-xl bg-ink-50 dark:bg-ink-800 border border-ink-200 dark:border-ink-700 focus:outline-none focus:ring-2 focus:ring-brand/50 focus:border-brand transition text-[15px]"
-                  placeholder="du@beispiel.de"
+                  placeholder="you@example.com"
                 />
               </label>
               <button
                 disabled={loading}
                 className="w-full py-3 rounded-xl bg-ink-900 dark:bg-ink-50 text-ink-50 dark:text-ink-900 font-medium hover:opacity-90 disabled:opacity-50 transition active:scale-[0.99]"
               >
-                {loading ? "Sende…" : "Code anfordern"}
+                {loading ? "Sending…" : "Request code"}
               </button>
             </form>
           ) : (
@@ -106,14 +106,14 @@ export default function LoginPage() {
                 disabled={loading || code.replace(/\D/g, "").length !== 8}
                 className="w-full py-3 rounded-xl bg-brand text-white font-medium hover:bg-brand-600 disabled:opacity-50 transition active:scale-[0.99]"
               >
-                {loading ? "Prüfe…" : "Anmelden"}
+                {loading ? "Checking…" : "Sign in"}
               </button>
               <button
                 type="button"
                 onClick={() => { setStep("email"); setCode(""); setError(null); setInfo(null); }}
                 className="w-full py-2 text-sm text-ink-500 hover:text-ink-900 dark:hover:text-ink-50 transition"
               >
-                Andere Mail-Adresse
+                Use a different email
               </button>
             </form>
           )}
@@ -122,7 +122,7 @@ export default function LoginPage() {
           {info && !error && <div className="mt-4 text-sm text-ink-500">{info}</div>}
         </div>
 
-        <p className="text-center text-[11px] text-ink-400 mt-6">Privater Login — nur erlaubte Adressen erhalten Codes.</p>
+        <p className="text-center text-[11px] text-ink-400 mt-6">Private login — only allowlisted addresses receive codes.</p>
       </div>
     </div>
   );

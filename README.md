@@ -151,6 +151,12 @@ Next.js 14 App Router, Node 20+, `ws`, `node-pty`, `better-sqlite3`, Jose (JWT),
 - Allowlist on the web side — no public signup.
 - `claude` is launched with whatever permissions you give it. The bridge does not sandbox. If you set `--permission-mode bypassPermissions` in `bridge/src/server.mjs`, anyone with a valid login can run shell commands on your machine. That's the point of the project — but treat your allowlist accordingly.
 
+## About the author
+
+Built by **Rainer Roloff** — founder of [Comms Connect](https://www.comms-connect.de), a German telco/IT brokerage, and a handful of side projects that all run on top of Claude Code. Conduit is the daily driver I use to keep talking to my own setup from the phone.
+
+More on [rainerroloff.de](https://rainerroloff.de) · [GitHub](https://github.com/CommsConnectgmbh)
+
 ## License
 
 MIT — see `LICENSE`. No warranty. No support promises. Pull requests welcome.

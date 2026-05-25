@@ -18,6 +18,23 @@ function isValidCwd(p) {
   try { return statSync(p).isDirectory(); } catch { return false; }
 }
 
+// If the bridge itself was launched from inside a Claude Code session, the
+// spawned `claude` process inherits CLAUDECODE/CLAUDE_CODE_* vars and refuses
+// to start with "Cannot be launched inside another Claude Code session".
+const CLAUDE_CODE_INHERITED_VARS = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_AGENT_SDK_VERSION",
+  "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
+  "CLAUDE_CODE_ENABLE_TASKS",
+];
+function cleanClaudeEnv(extra = {}) {
+  const env = { ...process.env, ...extra };
+  for (const k of CLAUDE_CODE_INHERITED_VARS) delete env[k];
+  return env;
+}
+
 const PORT = parseInt(process.env.BRIDGE_PORT || "8787", 10);
 const HOST = process.env.BRIDGE_HOST || "127.0.0.1";
 const SECRET = process.env.BRIDGE_SECRET;
@@ -610,7 +627,7 @@ function handleSocket(ws) {
       const spawnCwd = (sess.cwd && isValidCwd(sess.cwd)) ? sess.cwd : CWD;
       let child;
       try {
-        child = spawn(CLAUDE_BIN, args, { cwd: spawnCwd, env: { ...process.env, FORCE_COLOR: "0" }, stdio: ["ignore", "pipe", "pipe"] });
+        child = spawn(CLAUDE_BIN, args, { cwd: spawnCwd, env: cleanClaudeEnv({ FORCE_COLOR: "0" }), stdio: ["ignore", "pipe", "pipe"] });
       } catch (e) {
         send({ type: "error", message: `claude konnte nicht gestartet werden: ${e.message}` });
         return;
@@ -739,14 +756,13 @@ function handlePtySocket(ws) {
   else if (isUuid(sid)) args.push("--session-id", sid);
   args.push("--permission-mode", "bypassPermissions");
 
-  const env = {
-    ...process.env,
+  const env = cleanClaudeEnv({
     TERM: "xterm-256color",
     COLORTERM: "truecolor",
     LANG: process.env.LANG || "en_US.UTF-8",
     SUDO_ASKPASS: ASKPASS_PATH,
     FORCE_COLOR: "1",
-  };
+  });
 
   let term;
   try {

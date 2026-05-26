@@ -736,7 +736,8 @@ export function Chat({ email }: { email: string }) {
     try {
       const fd = new FormData();
       fd.append("file", blob, `voice.${extForMime(blob.type)}`);
-      fd.append("language", "en");
+      const lang = typeof navigator !== "undefined" && navigator.language?.toLowerCase().startsWith("de") ? "de" : "en";
+      fd.append("language", lang);
       fd.append("response_format", "json");
       fd.append("temperature", "0.0");
 

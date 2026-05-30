@@ -3,7 +3,7 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   experimental: {
-    serverActions: { allowedOrigins: ["conduit.dev", "localhost:3030"] },
+    serverActions: { allowedOrigins: ["conduit.rainerroloff.de", "jarvis.rainerroloff.de", "localhost:3030"] },
   },
   async headers() {
     return [

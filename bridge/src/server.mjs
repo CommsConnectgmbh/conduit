@@ -2,13 +2,13 @@ import http from "node:http";
 import { WebSocketServer } from "ws";
 import { jwtVerify } from "jose";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, appendFileSync, statSync, renameSync, accessSync, writeFileSync, constants as FS } from "node:fs";
-import { join, extname } from "node:path";
+import { existsSync, mkdirSync, appendFileSync, statSync, renameSync, accessSync, writeFileSync, realpathSync, constants as FS } from "node:fs";
+import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import pty from "node-pty";
 import {
-  ensureSession, setClaudeSessionId, listSessions, getSession, deleteSession,
+  ensureSession, setClaudeSessionId, listSessions, deleteSession,
   listMessages, insertUserMessage, insertAssistantPlaceholder, appendAssistant,
   updateTitle, updateCwd, addUsage, maybeAutoTitle,
 } from "./db.mjs";
@@ -26,6 +26,7 @@ const CWD = process.env.CLAUDE_CWD || homedir();
 const MODEL = process.env.CLAUDE_MODEL || "claude-opus-4-7";
 const LOG_DIR = process.env.LOG_DIR || join(homedir(), "Library/Logs/conduit-bridge");
 const IDLE_TTL_MS = 12 * 60 * 60 * 1000; // 12h in-memory state
+const ORPHAN_CHILD_GRACE_MS = 60_000;    // kill child 60s after ws.close if no reconnect
 const MAX_BUF = 1_000_000;
 const LOG_FILE = join(LOG_DIR, "bridge.log");
 const MAX_LOG_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -41,7 +42,24 @@ const WHISPER_SERVER_URL = process.env.WHISPER_SERVER_URL || "http://127.0.0.1:8
 const TRANSCRIBE_MAX_BYTES = 25 * 1024 * 1024; // 25 MB
 const TRANSCRIBE_TIMEOUT_MS = 60_000;
 
+// DNS-rebinding protection: optionally restrict to expected Host headers.
+const ALLOWED_HOSTS = (process.env.BRIDGE_ALLOWED_HOSTS || "")
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+function hostAllowed(req) {
+  if (ALLOWED_HOSTS.length === 0) return true; // not configured → skip
+  const host = String(req.headers["host"] || "").toLowerCase().split(":")[0];
+  // Always permit loopback so local healthchecks/dev still work.
+  if (host === "127.0.0.1" || host === "localhost" || host === "::1") return true;
+  return ALLOWED_HOSTS.includes(host);
+}
+
 if (!SECRET) { console.error("BRIDGE_SECRET missing"); process.exit(1); }
+if (HOST === "0.0.0.0") {
+  console.error("[security] BRIDGE_HOST=0.0.0.0 exposes the bridge to the LAN — refusing to start. Use 127.0.0.1.");
+  process.exit(1);
+}
 if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
 
 // In-process event-loop watchdog: if the loop is starved for >5s,
@@ -136,6 +154,10 @@ async function readJson(req) {
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, "http://localhost");
 
+  if (!hostAllowed(req)) {
+    return json(res, 421, { ok: false, error: "host not allowed" });
+  }
+
   if (u.pathname === "/healthz") {
     let claudeOk = false;
     try { accessSync(CLAUDE_BIN, FS.X_OK); claudeOk = true; } catch {}
@@ -160,16 +182,48 @@ const server = http.createServer(async (req, res) => {
 
 // Roots to search for @-file mentions. Defaults to CLAUDE_CWD; override with
 // FILE_SEARCH_ROOTS as a colon-separated list of absolute paths.
+//
+// SECURITY: SEARCH_ROOTS is the *hard* allowlist for both @-mention file search
+// (/api/files) and for any absolute path the PWA later references in a prompt.
+// Keep this scoped to concrete project roots — never `homedir()` — so that an
+// allowlisted (but possibly less-trusted) user cannot enumerate or read the
+// whole host filesystem. See `isAllowedPath()`.
 const SEARCH_ROOTS = (process.env.FILE_SEARCH_ROOTS || CWD)
   .split(":")
   .map((s) => s.trim())
-  .filter((s) => s.startsWith("/"));
+  .filter((s) => s.startsWith("/"))
+  // strip trailing slashes for clean prefix comparison
+  .map((s) => (s.length > 1 ? s.replace(/\/+$/, "") : s));
 const FILE_SEARCH_LIMIT = 30;
 const FILE_SEARCH_EXCLUDES = new Set([
   "node_modules", ".next", ".git", ".build", "dist", ".vercel", ".turbo",
   ".cache", "coverage", "build", "out", ".expo", ".gradle", ".idea",
   "Pods", "DerivedData", "vendor", ".pnpm", ".yarn", "tmp",
 ]);
+// Never surface secret/credential files in search results or mentions, even if
+// they live inside an allowed root. Matched case-insensitively against basename.
+const SECRET_NAME_RE = /(^\.env($|\.)|\.env\.|secret|credential|\.pem$|\.key$|\.p8$|\.p12$|id_rsa|id_ed25519|\.keychain)/i;
+function isSecretName(name) {
+  return SECRET_NAME_RE.test(name);
+}
+
+// Hard path allowlist: a path is only readable/mentionable if it resolves under
+// one of SEARCH_ROOTS (prefix match on a normalized, symlink-resolved path).
+function isAllowedPath(p) {
+  if (typeof p !== "string" || !p.startsWith("/") || p.includes("\0")) return false;
+  let real;
+  try { real = realpathSync(p); } catch { return false; }
+  for (const root of SEARCH_ROOTS) {
+    let realRoot;
+    try { realRoot = realpathSync(root); } catch { continue; }
+    if (real === realRoot || real.startsWith(realRoot + "/")) {
+      const base = real.split("/").pop() || "";
+      if (isSecretName(base)) return false;
+      return true;
+    }
+  }
+  return false;
+}
 
 async function handleFileSearch(req, res, u, auth) {
   const q = (u.searchParams.get("q") || "").trim().toLowerCase();
@@ -186,8 +240,9 @@ async function handleFileSearch(req, res, u, auth) {
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
       if (out.length >= FILE_SEARCH_LIMIT * 3) return;
-      if (e.name.startsWith(".") && e.name !== ".env.shared") continue;
+      if (e.name.startsWith(".")) continue;
       if (FILE_SEARCH_EXCLUDES.has(e.name)) continue;
+      if (isSecretName(e.name)) continue; // never surface secrets in mentions
       const p = join(dir, e.name);
       if (e.isDirectory()) {
         // Directory itself can be a match
@@ -250,9 +305,12 @@ async function handlePasteUpload(req, res, auth) {
     return json(res, 413, { ok: false, error: "file too large (max 25 MB)" });
   }
 
-  // Accept both raw image upload (Content-Type: image/...) and multipart
-  if (!ct.startsWith("image/") && !ct.includes("multipart/form-data") && ct !== "application/pdf") {
-    return json(res, 400, { ok: false, error: "expected image/* or multipart/form-data" });
+  // Raw upload only: the PWA sends Content-Type: image/* (or application/pdf).
+  // The previous binary-string multipart parser was unsafe (latin1 round-trip +
+  // boundary collisions in image bytes) and unused — removed.
+  const mime = ct.split(";")[0].trim();
+  if (!PASTE_ALLOWED_MIME.has(mime)) {
+    return json(res, 415, { ok: false, error: "unsupported file type — send raw image/* or application/pdf" });
   }
 
   try {
@@ -266,39 +324,8 @@ async function handlePasteUpload(req, res, auth) {
       chunks.push(chunk);
     }
     if (!received) return json(res, 400, { ok: false, error: "empty body" });
-    const body = Buffer.concat(chunks);
-
-    let ext, fileBuf;
-    if (ct.startsWith("image/") || ct === "application/pdf") {
-      ext = PASTE_ALLOWED_MIME.get(ct.split(";")[0].trim()) || ".bin";
-      fileBuf = body;
-    } else {
-      // Parse multipart - quick extraction of the first file part
-      const match = ct.match(/boundary=(.+)$/i);
-      if (!match) return json(res, 400, { ok: false, error: "missing multipart boundary" });
-      const boundary = "--" + match[1];
-      const str = body.toString("binary");
-      const parts = str.split(boundary);
-      let found = null;
-      for (const p of parts) {
-        const hdrEnd = p.indexOf("\r\n\r\n");
-        if (hdrEnd < 0) continue;
-        const hdrs = p.slice(0, hdrEnd).toLowerCase();
-        if (!hdrs.includes("filename=")) continue;
-        const ctMatch = hdrs.match(/content-type:\s*([^\r\n]+)/);
-        const partCt = ctMatch ? ctMatch[1].trim() : "application/octet-stream";
-        const data = p.slice(hdrEnd + 4, p.length - 2); // strip trailing \r\n
-        found = { ct: partCt, data: Buffer.from(data, "binary") };
-        break;
-      }
-      if (!found) return json(res, 400, { ok: false, error: "no file part" });
-      ext = PASTE_ALLOWED_MIME.get(found.ct) || extname(found.ct) || ".bin";
-      fileBuf = found.data;
-    }
-
-    if (!PASTE_ALLOWED_MIME.has(ct.split(";")[0].trim()) && ![".png", ".jpg", ".gif", ".webp", ".heic", ".heif", ".pdf"].includes(ext)) {
-      return json(res, 415, { ok: false, error: "unsupported file type" });
-    }
+    const fileBuf = Buffer.concat(chunks);
+    const ext = PASTE_ALLOWED_MIME.get(mime);
 
     const name = `${Date.now()}-${randomUUID().slice(0, 8)}${ext}`;
     const filePath = join(PASTE_DIR, name);
@@ -429,6 +456,8 @@ async function handleApi(req, res, u, auth) {
           out.cwdUpdated = updateCwd(sid, email, null).changes;
         } else if (!isValidCwd(body.cwd)) {
           return json(res, 400, { ok: false, error: "cwd invalid or not a directory" });
+        } else if (!isAllowedPath(body.cwd)) {
+          return json(res, 403, { ok: false, error: "cwd outside allowed roots" });
         } else {
           out.cwdUpdated = updateCwd(sid, email, body.cwd).changes;
         }
@@ -452,6 +481,10 @@ server.on("upgrade", async (req, socket, head) => {
   try {
     const u = new URL(req.url, "http://localhost");
     log("info", "ws_upgrade_attempt", { path: u.pathname, cfRay: cf, ua });
+    if (!hostAllowed(req)) {
+      log("warn", "ws_upgrade_bad_host", { host: req.headers["host"] });
+      socket.write("HTTP/1.1 421 Misdirected Request\r\n\r\n"); socket.destroy(); return;
+    }
     if (u.pathname !== "/ws" && u.pathname !== "/pty") {
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return;
     }
@@ -572,9 +605,15 @@ function handleSocket(ws) {
         return;
       }
 
+      // Cancel any pending orphan-child kill from a previous ws.close: this
+      // prompt is the reconnect that the grace timer was waiting for.
+      const existing = runtime.get(sid);
+      if (existing?.orphanKillTimer) {
+        clearTimeout(existing.orphanKillTimer);
+        existing.orphanKillTimer = undefined;
+      }
       // Stale-Child-Kill: kill any orphan child still bound to this sid
       // from a previous (now-dead) WS connection before spawning a new one.
-      const existing = runtime.get(sid);
       if (existing?.child) {
         log("warn", "killing_stale_child_on_reconnect", { sid });
         try { existing.child.kill("SIGTERM"); } catch {}
@@ -665,11 +704,26 @@ function handleSocket(ws) {
   ws.on("close", () => {
     clearChildStallTimer();
     clearInterval(clientWatch);
-    // Note: we do NOT kill the child on ws.close — keep streaming so that
-    // a reconnect (or another tab) can pick up via DB persistence. The
-    // stale-child-kill on next prompt prevents zombies. Idle child cleanup
-    // happens via IDLE_TTL_MS sweeper.
-    log("info", "ws_close", { sid: ws.auth?.sid, hasChild: !!currentChild });
+    const sid = ws.auth?.sid;
+    // Keep the child alive briefly so a reconnect (or another tab) can pick up
+    // via DB persistence. But if NO reconnect/new-prompt arrives within the
+    // grace window, kill it — otherwise a long bypassPermissions tool-run keeps
+    // burning tokens (and can complete destructive actions) for up to 12h with
+    // no receiver. The grace timer is cancelled when a new prompt arrives.
+    const rt = sid ? runtime.get(sid) : null;
+    if (rt?.child) {
+      if (rt.orphanKillTimer) clearTimeout(rt.orphanKillTimer);
+      rt.orphanKillTimer = setTimeout(() => {
+        rt.orphanKillTimer = undefined;
+        if (rt.child) {
+          log("warn", "killing_orphan_child_no_reconnect", { sid });
+          try { rt.child.kill("SIGTERM"); } catch {}
+          rt.child = undefined;
+        }
+      }, ORPHAN_CHILD_GRACE_MS);
+      rt.orphanKillTimer.unref?.();
+    }
+    log("info", "ws_close", { sid, hasChild: !!currentChild });
   });
 }
 
@@ -677,6 +731,12 @@ function handleStreamLine(line, send, rt, sid, assistantId) {
   let ev;
   try { ev = JSON.parse(line); } catch { return; }
   if (ev.type === "system" && ev.subtype === "init" && ev.session_id) {
+    // A new CLI session_id means cumulative usage/cost restarts at 0 — drop the
+    // stale cumulative snapshot so the next `result` delta is computed from 0.
+    if (rt.usageSessionId !== ev.session_id) {
+      rt.usageSessionId = ev.session_id;
+      rt.lastCumUsage = null;
+    }
     rt.claudeSessionId = ev.session_id;
     try { setClaudeSessionId(sid, ev.session_id); } catch {}
   } else if (ev.type === "assistant" && ev.message?.content) {
@@ -695,13 +755,34 @@ function handleStreamLine(line, send, rt, sid, assistantId) {
       send({ type: "error", message: String(ev.result).slice(0, 600) });
     }
     if (ev.usage) {
-      const delta = {
+      // `result` reports usage/cost CUMULATIVELY for the whole CLI session
+      // (we keep it alive via --resume), not per-turn. Subtract the last
+      // cumulative snapshot for this runtime so addUsage (which does `+= ?`)
+      // only records this turn's delta. Without this, turn N re-adds the full
+      // running total → ~N²/2 over-count.
+      const cum = {
         tokens_in:    Number(ev.usage.input_tokens)               || 0,
         tokens_out:   Number(ev.usage.output_tokens)              || 0,
         cache_read:   Number(ev.usage.cache_read_input_tokens)    || 0,
         cache_create: Number(ev.usage.cache_creation_input_tokens) || 0,
         cost_usd:     Number(ev.total_cost_usd)                   || 0,
       };
+      const prev = rt.lastCumUsage || { tokens_in: 0, tokens_out: 0, cache_read: 0, cache_create: 0, cost_usd: 0 };
+      // Guard against a fresh CLI session reporting smaller totals (e.g. after a
+      // bridge restart loses the in-memory snapshot but --resume restarts cost):
+      // never emit a negative delta — fall back to the cumulative value itself.
+      const sub = (key) => {
+        const d = cum[key] - prev[key];
+        return d >= 0 ? d : cum[key];
+      };
+      const delta = {
+        tokens_in:    sub("tokens_in"),
+        tokens_out:   sub("tokens_out"),
+        cache_read:   sub("cache_read"),
+        cache_create: sub("cache_create"),
+        cost_usd:     sub("cost_usd"),
+      };
+      rt.lastCumUsage = cum;
       try { addUsage(sid, delta); } catch {}
       send({ type: "usage", delta, durationMs: ev.duration_ms || 0 });
     }

@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { ALLOWED_EMAILS, PENDING_COOKIE, SESSION_COOKIE, SESSION_TTL_S } from "@/lib/config";
 import { verifyPending } from "@/lib/otp";
 import { signSession } from "@/lib/auth";
+import { checkAndHitVerify } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -16,6 +17,18 @@ export async function POST(req: Request) {
   }
   if (!ALLOWED_EMAILS.includes(email)) {
     return NextResponse.json({ ok: false, error: "Wrong code." }, { status: 401 });
+  }
+
+  // Brute-force cap on the stateless pending JWT: 8 verify attempts / 10 min.
+  // Burning the limit invalidates the pending cookie, forcing a fresh request.
+  const rl = await checkAndHitVerify();
+  if (!rl.allowed) {
+    const c = await cookies();
+    c.delete(PENDING_COOKIE);
+    return NextResponse.json(
+      { ok: false, error: "Too many attempts — request a new code." },
+      { status: 429, headers: { "retry-after": String(rl.retryAfterSec || 60) } },
+    );
   }
 
   const c = await cookies();
@@ -38,6 +51,7 @@ export async function POST(req: Request) {
     maxAge: SESSION_TTL_S,
   });
   c.delete(PENDING_COOKIE);
+  c.delete("conduit_rl_verify");
 
   return NextResponse.json({ ok: true });
 }

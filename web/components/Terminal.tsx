@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Square, RotateCcw, AlertTriangle } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
@@ -18,16 +18,83 @@ export function Terminal({ sid, cwd, theme }: Props) {
   const termRef = useRef<any>(null);
   const fitRef = useRef<any>(null);
   const reconnectRef = useRef<number>(0);
+  const cancelledRef = useRef<boolean>(false);
   const [status, setStatus] = useState<TermStatus>("connecting");
   const [error, setError] = useState<string | null>(null);
 
+  // Single source of truth for opening a WS. Stable across renders so both the
+  // initial effect and the manual reconnect button use the exact same setup +
+  // the same cancelledRef guard (prevents duplicate sockets on unmount).
+  const connectWs = useCallback(async () => {
+    if (cancelledRef.current) return;
+    // Tear down any existing socket first so we never leak a second connection.
+    if (wsRef.current) {
+      try { wsRef.current.onclose = null; wsRef.current.close(); } catch {}
+      wsRef.current = null;
+    }
+    try {
+      setStatus("connecting");
+      setError(null);
+      const tokRes = await fetch("/api/chat/token", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: sid }),
+      });
+      if (!tokRes.ok) throw new Error("Auth failed");
+      if (cancelledRef.current) return;
+      const { token, sessionId, bridgeUrl } = await tokRes.json();
+      const url = `${bridgeUrl}/pty?token=${encodeURIComponent(token)}&sid=${encodeURIComponent(sessionId)}`;
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (cancelledRef.current) { try { ws.close(); } catch {} return; }
+        setStatus("open");
+        reconnectRef.current = 0;
+        const term = termRef.current;
+        if (term) {
+          try { ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); } catch {}
+        }
+      };
+      ws.onmessage = (ev) => {
+        let msg: any; try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.type === "data") {
+          termRef.current?.write(msg.data);
+        } else if (msg.type === "exit") {
+          const code = msg.code ?? "?";
+          termRef.current?.write(`\r\n\x1b[2m[exit ${code}${msg.signal ? ` (${msg.signal})` : ""}]\x1b[0m\r\n`);
+          setStatus("closed");
+        }
+      };
+      ws.onclose = () => {
+        if (cancelledRef.current) return;
+        // Only the *current* socket's onclose may trigger auto-reconnect.
+        if (wsRef.current !== ws) return;
+        setStatus("closed");
+        // 1× auto-reconnect after 2s
+        if (reconnectRef.current < 1) {
+          reconnectRef.current++;
+          setTimeout(() => { if (!cancelledRef.current) connectWs(); }, 2000);
+        }
+      };
+      ws.onerror = () => {
+        if (cancelledRef.current) return;
+        setError("Bridge offline — is your host reachable? Tunnel up?");
+        setStatus("error");
+      };
+    } catch (e: any) {
+      if (cancelledRef.current) return;
+      setError(e?.message || "Connection failed");
+      setStatus("error");
+    }
+  }, [sid]);
+
   useEffect(() => {
-    let cancelled = false;
+    cancelledRef.current = false;
     let resizeObs: ResizeObserver | null = null;
 
     const cleanup = () => {
-      cancelled = true;
-      try { wsRef.current?.close(); } catch {}
+      cancelledRef.current = true;
+      try { if (wsRef.current) wsRef.current.onclose = null; wsRef.current?.close(); } catch {}
       try { termRef.current?.dispose(); } catch {}
       resizeObs?.disconnect();
       wsRef.current = null;
@@ -41,7 +108,7 @@ export function Terminal({ sid, cwd, theme }: Props) {
         import("@xterm/addon-fit"),
         import("@xterm/addon-web-links"),
       ]);
-      if (cancelled || !hostRef.current) return;
+      if (cancelledRef.current || !hostRef.current) return;
 
       const term = new Xterm({
         cursorBlink: true,
@@ -82,60 +149,9 @@ export function Terminal({ sid, cwd, theme }: Props) {
       connectWs();
     };
 
-    const connectWs = async () => {
-      try {
-        setStatus("connecting");
-        setError(null);
-        const tokRes = await fetch("/api/chat/token", {
-          method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sessionId: sid }),
-        });
-        if (!tokRes.ok) throw new Error("Auth failed");
-        const { token, sessionId, bridgeUrl } = await tokRes.json();
-        const url = `${bridgeUrl}/pty?token=${encodeURIComponent(token)}&sid=${encodeURIComponent(sessionId)}`;
-        const ws = new WebSocket(url);
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-          setStatus("open");
-          reconnectRef.current = 0;
-          const term = termRef.current;
-          if (term) {
-            try { ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); } catch {}
-          }
-        };
-        ws.onmessage = (ev) => {
-          let msg: any; try { msg = JSON.parse(ev.data); } catch { return; }
-          if (msg.type === "data") {
-            termRef.current?.write(msg.data);
-          } else if (msg.type === "exit") {
-            const code = msg.code ?? "?";
-            termRef.current?.write(`\r\n\x1b[2m[exit ${code}${msg.signal ? ` (${msg.signal})` : ""}]\x1b[0m\r\n`);
-            setStatus("closed");
-          }
-        };
-        ws.onclose = () => {
-          if (cancelled) return;
-          setStatus("closed");
-          // 1× auto-reconnect after 2s
-          if (reconnectRef.current < 1) {
-            reconnectRef.current++;
-            setTimeout(() => { if (!cancelled) connectWs(); }, 2000);
-          }
-        };
-        ws.onerror = () => {
-          setError("Bridge offline — is your host reachable? Tunnel up?");
-          setStatus("error");
-        };
-      } catch (e: any) {
-        setError(e?.message || "Connection failed");
-        setStatus("error");
-      }
-    };
-
     init();
     return cleanup;
-  }, [sid, theme]);
+  }, [sid, theme, connectWs]);
 
   const sendSignal = (name: "SIGINT" | "SIGTERM") => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -144,49 +160,10 @@ export function Terminal({ sid, cwd, theme }: Props) {
   };
 
   const reconnect = () => {
-    try { wsRef.current?.close(); } catch {}
     reconnectRef.current = 0;
-    // useEffect re-init? Trigger it ourselves:
     const term = termRef.current;
     if (term) term.write(`\r\n\x1b[2m[reconnect…]\x1b[0m\r\n`);
-    // setStatus does not trigger a re-effect; rebuild the WS directly
-    setStatus("connecting");
-    setError(null);
-    setTimeout(() => {
-      // Re-trigger by closing existing socket and letting onclose's auto-reconnect logic kick in
-      // If onclose already fired, kick it manually:
-      (async () => {
-        try {
-          const tokRes = await fetch("/api/chat/token", {
-            method: "POST", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ sessionId: sid }),
-          });
-          if (!tokRes.ok) throw new Error("Auth failed");
-          const { token, sessionId, bridgeUrl } = await tokRes.json();
-          const url = `${bridgeUrl}/pty?token=${encodeURIComponent(token)}&sid=${encodeURIComponent(sessionId)}`;
-          const ws = new WebSocket(url);
-          wsRef.current = ws;
-          ws.onopen = () => {
-            setStatus("open");
-            const t = termRef.current;
-            if (t) try { ws.send(JSON.stringify({ type: "resize", cols: t.cols, rows: t.rows })); } catch {}
-          };
-          ws.onmessage = (ev) => {
-            let msg: any; try { msg = JSON.parse(ev.data); } catch { return; }
-            if (msg.type === "data") termRef.current?.write(msg.data);
-            else if (msg.type === "exit") {
-              termRef.current?.write(`\r\n\x1b[2m[exit ${msg.code ?? "?"}]\x1b[0m\r\n`);
-              setStatus("closed");
-            }
-          };
-          ws.onclose = () => setStatus("closed");
-          ws.onerror = () => { setError("Bridge offline"); setStatus("error"); };
-        } catch (e: any) {
-          setError(e?.message || "Connection failed");
-          setStatus("error");
-        }
-      })();
-    }, 50);
+    connectWs();
   };
 
   return (

@@ -134,15 +134,17 @@ bash scripts/install.sh                        # builds + installs to /Applicati
 
 ## Configuration knobs worth knowing
 
-- **`ALLOWED_EMAILS`** — comma-separated, lowercased. Anyone else is silently rejected.
+- **`ALLOWED_EMAILS`** — comma-separated, lowercased. Anyone else is silently rejected. **Security note:** the bridge is single-tenant per host and runs `claude` with `--permission-mode bypassPermissions`. Every allowlisted email therefore gets the *same* trust level — effectively full access to whatever is under `FILE_SEARCH_ROOTS`/`CLAUDE_CWD`. Only add emails you'd trust with that host.
 - **`CLAUDE_CWD`** — the working directory `claude` spawns in. Point it at your code root so skills/memory/MCPs load.
 - **`CLAUDE_MODEL`** — passed as `--model`. Use any current Anthropic model id.
-- **`FILE_SEARCH_ROOTS`** — colon-separated roots for `@`-mentions. Defaults to `CLAUDE_CWD`.
+- **`FILE_SEARCH_ROOTS`** — colon-separated roots for `@`-mentions and per-session cwd. Defaults to `CLAUDE_CWD`. **Scope this to concrete project roots — never `homedir()`** — so allowlisted users cannot enumerate the whole filesystem. Secret files (`.env*`, `*.pem`, `*.key`, `*.p8`, `id_rsa`…) are always excluded from search/mentions even inside these roots, and per-session `cwd` is rejected if it falls outside them.
+- **`BRIDGE_HOST`** — must stay `127.0.0.1`. The bridge refuses to start on `0.0.0.0`.
+- **`BRIDGE_ALLOWED_HOSTS`** — optional comma-separated `Host` allowlist (DNS-rebinding protection); loopback is always allowed.
 - **Whisper server** — for voice in, you need `whisper-server` (from whisper.cpp) running on `:8088`. See [whisper.cpp docs](https://github.com/ggerganov/whisper.cpp).
 
 ## Stack
 
-Next.js 14 App Router, Node 20+, `ws`, `node-pty`, `better-sqlite3`, Jose (JWT), Tailwind, Resend, Cloudflare Tunnel.
+Next.js 14 App Router, Node 20+ (built-in `node:sqlite`), `ws`, `node-pty`, Jose (JWT), Tailwind, Resend, Cloudflare Tunnel.
 
 ## Security model
 

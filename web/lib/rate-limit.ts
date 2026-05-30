@@ -2,45 +2,73 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { AUTH_SECRET } from "./config";
 
-const COOKIE = "conduit_rl";
 const enc = new TextEncoder();
-const WINDOW_MS = 10 * 60 * 1000; // 10 min
-const MAX_HITS = 5;
 
-type Bucket = { hits: number[] };
+type Limiter = {
+  cookie: string;
+  audience: string;
+  windowMs: number;
+  maxHits: number;
+  ttlS: number;
+};
 
-async function read(): Promise<Bucket> {
+// Request a login code: 5 / 10 min.
+const REQUEST_LIMITER: Limiter = {
+  cookie: "conduit_rl",
+  audience: "rl",
+  windowMs: 10 * 60 * 1000,
+  maxHits: 5,
+  ttlS: 30 * 60,
+};
+
+// Verify a code: 8 / 10 min — caps brute-force against the stateless pending JWT.
+const VERIFY_LIMITER: Limiter = {
+  cookie: "conduit_rl_verify",
+  audience: "rl-verify",
+  windowMs: 10 * 60 * 1000,
+  maxHits: 8,
+  ttlS: 30 * 60,
+};
+
+async function read(l: Limiter): Promise<number[]> {
   const c = await cookies();
-  const tok = c.get(COOKIE)?.value;
-  if (!tok) return { hits: [] };
+  const tok = c.get(l.cookie)?.value;
+  if (!tok) return [];
   try {
-    const { payload } = await jwtVerify(tok, enc.encode(AUTH_SECRET()), { issuer: "conduit", audience: "rl" });
-    const hits = Array.isArray(payload.hits) ? (payload.hits as number[]) : [];
-    return { hits };
-  } catch { return { hits: [] }; }
+    const { payload } = await jwtVerify(tok, enc.encode(AUTH_SECRET()), { issuer: "conduit", audience: l.audience });
+    return Array.isArray(payload.hits) ? (payload.hits as number[]) : [];
+  } catch { return []; }
 }
 
-async function write(hits: number[]) {
+async function write(l: Limiter, hits: number[]) {
   const tok = await new SignJWT({ hits })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("30m")
+    .setExpirationTime(`${l.ttlS}s`)
     .setIssuer("conduit")
-    .setAudience("rl")
+    .setAudience(l.audience)
     .sign(enc.encode(AUTH_SECRET()));
   const c = await cookies();
-  c.set(COOKIE, tok, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 30 * 60 });
+  c.set(l.cookie, tok, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: l.ttlS });
 }
 
-export async function checkAndHit(): Promise<{ allowed: boolean; remaining: number; retryAfterSec?: number }> {
+async function checkAndHitLimiter(l: Limiter): Promise<{ allowed: boolean; remaining: number; retryAfterSec?: number }> {
   const now = Date.now();
-  const { hits } = await read();
-  const recent = hits.filter((t) => now - t < WINDOW_MS);
-  if (recent.length >= MAX_HITS) {
+  const hits = await read(l);
+  const recent = hits.filter((t) => now - t < l.windowMs);
+  if (recent.length >= l.maxHits) {
     const oldest = Math.min(...recent);
-    return { allowed: false, remaining: 0, retryAfterSec: Math.ceil((WINDOW_MS - (now - oldest)) / 1000) };
+    return { allowed: false, remaining: 0, retryAfterSec: Math.ceil((l.windowMs - (now - oldest)) / 1000) };
   }
   recent.push(now);
-  await write(recent);
-  return { allowed: true, remaining: MAX_HITS - recent.length };
+  await write(l, recent);
+  return { allowed: true, remaining: l.maxHits - recent.length };
+}
+
+export async function checkAndHit() {
+  return checkAndHitLimiter(REQUEST_LIMITER);
+}
+
+export async function checkAndHitVerify() {
+  return checkAndHitLimiter(VERIFY_LIMITER);
 }

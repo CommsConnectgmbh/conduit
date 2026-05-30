@@ -13,8 +13,11 @@ export function hashCode(code: string, email: string): string {
 }
 
 export async function signPending(email: string, code: string): Promise<string> {
+  // Note: brute-force attempts are capped server-side via the verify rate-limit
+  // (lib/rate-limit checkAndHitVerify), not via a claim in this stateless JWT —
+  // a stateless attempts counter cannot be enforced (client replays old cookie).
   const codeHash = hashCode(code, email);
-  return await new SignJWT({ email, codeHash, attempts: 0 })
+  return await new SignJWT({ email, codeHash })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${PENDING_TTL_S}s`)

@@ -94,15 +94,25 @@ struct WebViewView: NSViewRepresentable {
                      initiatedByFrame frame: WKFrameInfo,
                      type: WKMediaCaptureType,
                      decisionHandler: @escaping (WKPermissionDecision) -> Void) {
-            decisionHandler(.grant)
+            // Only grant mic/camera to our own PWA origin. A redirected or
+            // compromised page on any other host gets denied.
+            if AppConfig.isTrustedHost(origin.host) {
+                decisionHandler(.grant)
+            } else {
+                decisionHandler(.deny)
+            }
         }
 
-        // MARK: - target=_blank → open in new tab via NSWorkspace, or load in-place
+        // MARK: - target=_blank → open externally in the system browser
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if let url = navigationAction.request.url {
+            // Only hand http(s) URLs to the system browser; never arbitrary
+            // schemes (file:, custom app schemes) a malicious page could inject.
+            if let url = navigationAction.request.url,
+               let scheme = url.scheme?.lowercased(),
+               scheme == "http" || scheme == "https" {
                 NSWorkspace.shared.open(url)
             }
             return nil

@@ -136,11 +136,14 @@ export function appendAssistant(msgId, text) {
 }
 
 export function addUsage(sid, usage) {
+  // Use Math.trunc (not `| 0`): bitwise ops clamp to 32-bit signed (~2.1B),
+  // which cumulative cache-read tokens can exceed over a long session.
+  const int = (x) => Math.trunc(Number(x)) || 0;
   Q.addUsage.run(
-    usage.tokens_in | 0,
-    usage.tokens_out | 0,
-    usage.cache_read | 0,
-    usage.cache_create | 0,
+    int(usage.tokens_in),
+    int(usage.tokens_out),
+    int(usage.cache_read),
+    int(usage.cache_create),
     Number(usage.cost_usd) || 0,
     Date.now(),
     sid,

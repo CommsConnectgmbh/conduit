@@ -18,7 +18,10 @@ type SessionRuntime = {
 };
 
 const PING_INTERVAL_MS = 25_000;
-const WATCHDOG_MS = 600_000; // 10 min ohne Chunk/Heartbeat → tot
+// Bridge emits a heartbeat every 25s while Claude works (CHILD_HEARTBEAT_MS).
+// If we see neither chunk nor heartbeat for 90s the transport (tunnel/WS) is
+// dead — detect that in <2 min instead of waiting the full 10-min bridge stall.
+const WATCHDOG_MS = 90_000;
 const RECONNECT_DELAY_MS = 2_000;
 
 export function Chat({ email }: { email: string }) {
@@ -483,7 +486,7 @@ export function Chat({ email }: { email: string }) {
         if (!rt) return;
         clearTimeout(rt.watchdog);
         rt.watchdog = setTimeout(() => {
-          patchMessage(sid, assistantId, { content: "**⚠ Bridge antwortet nicht** (10 min still, getrennt). Erneut senden zum Versuch." });
+          patchMessage(sid, assistantId, { content: "**⚠ Bridge antwortet nicht** (90 s still, getrennt). Erneut senden zum Versuch." });
           setStatusFor(sid, "error", "Bridge not responding.");
           teardown(sid);
         }, WATCHDOG_MS);
